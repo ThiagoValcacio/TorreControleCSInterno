@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 TIMEOUT = (5, 30)
 PER_PAGE = 150
 REFRESH_SECS = 300  # 5 min
+EXCLUDE_ADMINS = {"Suporte Mottu"} 
 
 # -------------------------
 # Infra básica (MESMO fetch)
@@ -145,10 +146,17 @@ def get_df():
             ca = float(ca)
         except Exception:
             continue
+
         tma_min = max(0.0, (now_ts - ca) / 60.0)
         aid = obj.get("admin_assignee_id")
         admin_name = admin_map.get(str(aid)) if aid is not None else None
-        rows.append({"Admin_name": admin_name or "Não atribuído", "TMA_individual": tma_min})
+        name = admin_name or "Não atribuído"
+
+        # --- filtro para remover "Suporte Mottu" ---
+        if name in EXCLUDE_ADMINS:
+            continue
+
+        rows.append({"Admin_name": name, "TMA_individual": tma_min})
 
     if not rows:
         return pd.DataFrame(columns=["Admin_name", "TMA", "qtd"])
