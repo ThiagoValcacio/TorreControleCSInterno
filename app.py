@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 TIMEOUT = (5, 30)
 PER_PAGE = 150
 REFRESH_SECS = 300  # 5 min
-EXCLUDE_ADMINS = {"Suporte Mottu"} 
+EXCLUDE_ADMINS = {"Suporte Mottu", "Não atribuído"} 
 
 # -------------------------
 # Infra básica (MESMO fetch)
@@ -308,3 +308,4 @@ if df.empty:
 else:
     # 6s de pulso leve; ajuste seconds/fps/amp/freq se quiser
     plot_combo(df)
+
