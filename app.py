@@ -17,7 +17,6 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 
-SECRETS = r"C:\Users\thiago.assis\.vscode\programs\Mottu\olhovivo\.streamlit\secrets.toml"
 TIMEOUT = (5, 30)
 PER_PAGE = 150
 REFRESH_SECS = 300  # 5 min
@@ -34,6 +33,25 @@ def load_secrets(path: str) -> dict:
         import toml
         with open(path, "r", encoding="utf-8") as f:
             return toml.load(f)
+        
+def get_auth():
+    """
+    Lê segredos do Streamlit Cloud (st.secrets) ou falha com mensagem clara.
+    Espera o bloco:
+      [auth]
+      INTERCOM_BEARER="..."
+      INTERCOM_VERSION="2.14"
+      INTERCOM_BASE_URL="https://api.intercom.io"
+    """
+    if not getattr(st, "secrets", None) or "auth" not in st.secrets:
+        raise RuntimeError(
+            "Segredos não encontrados. No Streamlit Cloud, abra Settings → Secrets e adicione o bloco [auth]."
+        )
+    auth = st.secrets["auth"]
+    for k in ("INTERCOM_BEARER",):
+        if not auth.get(k):
+            raise RuntimeError(f"Chave ausente em [auth]: {k}")
+    return auth
 
 def make_headers(auth: dict) -> dict:
     bearer = (auth.get("INTERCOM_BEARER") or "").strip()
@@ -103,10 +121,16 @@ def fetch_conversations(base_url: str, hdrs: dict) -> List[dict]:
 # -------------------------
 @st.cache_data(ttl=REFRESH_SECS)
 def get_df():
-    cfg = load_secrets(SECRETS)
-    auth = cfg.get("auth") or {}
+    auth = get_auth()
     base_url = (auth.get("INTERCOM_BASE_URL") or "https://api.intercom.io").rstrip("/")
-    hdrs = make_headers(auth)
+    hdrs = {
+        "Authorization": f"Bearer {(auth.get('INTERCOM_BEARER') or '').strip()}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Intercom-Version": auth.get("INTERCOM_VERSION", "2.14"),
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+    }
 
     slim = fetch_conversations(base_url, hdrs)
     admin_map = fetch_admin_map(base_url, hdrs)
