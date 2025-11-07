@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# App Streamlit (agregado por TIME + filtro Regional, com contato->cidade->filial->regional):
-# - Fetch Intercom (conserva a busca original, adicionando "contacts" nos fields)
-# - Para cada conversa: extrai contact.id -> GET /contacts/{id} -> location.city
-# - Filial = "Mottu {city}" -> código da filial (dict) -> Regional (dict)
-# - Filtro por Regional antes da agregação por Time
-# - Exibe TABELA: Time | Qtd | TMA (ordenado por TMA desc)
-# - Auto-refresh real a cada 10 min (meta refresh) + cache ttl=600
-# - Tabela alta, width "stretch" e gradiente branco→vermelho no TMA (sem matplotlib)
+# Torre de Controle - CS Interno (Streamlit)
+# - Filial vem de custom_attributes["Lugar"] do contato
+# - Mapeia Filial -> código -> Regional
+# - Congela a tabela durante atualização (duplo buffer)
+# - Atualiza automaticamente a cada 10 minutos (sem derrubar a tabela)
+# - Horário exibido com ajuste de -3 horas (somente na UI)
 
-import os, sys, json, requests, math, time, unicodedata
-from datetime import datetime, timezone
+import json, math, time, unicodedata
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
 import pandas as pd
+import requests
 import streamlit as st
+
+# Tenta autorefresh sem recarregar a página
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=600_000, key="periodic_refresh")  # 600.000 ms = 10 min
+except Exception:
+    pass  # segue sem autorefresh baseado em componente
 
 TIMEOUT = (5, 60)
 PER_PAGE = 150
-REFRESH_SECS = 600  # 10 min
+REFRESH_SECS = 600  # 10 minutos
 EXCLUDE_ADMINS = {"Suporte Mottu", "Não atribuído"}
 
 # -------------------------------------------------------------------
@@ -82,7 +88,7 @@ filiais = {
     "Mottu Interlagos": 37, "Mottu Ipatinga": 55, "Mottu Ipiranga": 94, "Mottu Ipojuca": 267,
     "Mottu Itabuna": 116, "Mottu Itajaí": 111, "Mottu Itapetininga": 449, "Mottu Itapipoca": 357,
     "Mottu Jacarepaguá": 248, "Mottu Jandira": 41, "Mottu Jequié": 271, "Mottu Ji Paraná": 416,
-    "Mottu Joinville": 56, "Mottu João Pessoa": 28, "Mottu Juazeiro": 45, "Mottu Juazeiro do Norte": 46,
+    "Mottu Joinville": 56, "Mottu João Pessoa": 28, "Mottu Juazeiro": 45, "Juazeiro do Norte": 46,
     "Mottu Juiz de Fora": 95, "Mottu Jundiaí": 33, "Mottu Lagarto": 462, "Mottu Limão - Zona Norte": 36,
     "Mottu Linhares": 258, "Mottu Londrina": 49, "Mottu Macapá": 66, "Mottu Macaé": 266,
     "Mottu Maceió": 22, "Mottu Manaus": 5, "Mottu Marabá": 68, "Mottu Maracanaú": 180,
@@ -101,7 +107,7 @@ filiais = {
     "Mottu Rondonópolis": 70, "Mottu Salvador": 6, "Mottu Santa Maria": 455, "Mottu Santarém": 81,
     "Mottu Santos": 24, "Mottu Serra": 19, "Mottu Sete Lagoas": 372, "Mottu Sobral": 74,
     "Mottu Sorocaba": 34, "Mottu São Bernardo": 23, "Mottu São Carlos": 64, "Mottu São José do Rio Preto": 63,
-    "Mottu São José dos Campos": 20, "Mottu São Luís": 21, "Mottu São Miguel": 13, "Mottu Taboão": 35,
+    "São José dos Campos": 20, "Mottu São Luís": 21, "Mottu São Miguel": 13, "Mottu Taboão": 35,
     "Mottu Teixeira de Freitas": 284, "Mottu Teresina": 26, "Mottu Toledo": 463, "Mottu Uberaba": 78,
     "Mottu Uberlândia": 25, "Mottu Valparaíso": 310, "Mottu Vila Isabel": 225, "Mottu Vila Velha": 72,
     "Mottu Vitória": 405, "Mottu Vitória da Conquista": 80, "Mottu Vitória de Santo Antão": 250,
@@ -117,32 +123,6 @@ filiais = {
     "Mottu Campos dos Goytacazes": 285, "Mottu Ponta Grossa": 319, "Mottu Cascavel": 397
 }
 
-# --- Normalização para mapear cidade -> código da filial (tolerante a acentos/caixa/espaços)
-def _norm(s: str) -> str:
-    s = "" if s is None else str(s).strip()
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))  # remove acentos
-    s = " ".join(s.split())                                      # colapsa espaços
-    return s.casefold()                                          # lower unicode
-
-def _city_from_filial(name: str) -> str:
-    name = str(name or "")
-    return name[6:].strip() if name.lower().startswith("mottu ") else name.strip()
-
-# Índice por CIDADE normalizada → código
-CITY2CODE: Dict[str, int] = {}
-for full_name, code in filiais.items():
-    city = _city_from_filial(full_name)
-    CITY2CODE[_norm(city)] = code
-# (opcional) aliases se necessário
-CITY_ALIASES = {
-    # "campo grande rj": "Campo Grande - RJ",
-    # "limao": "Limão - Zona Norte",
-}
-for k, v in CITY_ALIASES.items():
-    if _norm(v) in CITY2CODE:
-        CITY2CODE[_norm(k)] = CITY2CODE[_norm(v)]
-
 regionais_base = {
     "Francisco": [61, 5, 59, 30, 4, 29, 28, 26, 27, 6, 21, 114, 9, 84, 16, 122, 18, 17],
     "Bruno": [31, 62, 66, 25, 68, 63, 81, 79, 38, 8, 3, 72, 19, 15, 118, 40, 46, 39],
@@ -155,11 +135,8 @@ regionais_base = {
 regionais_ui = dict(regionais_base)
 regionais_ui["Luciano"] = sorted(sum(regionais_base.values(), []))
 
-# cria um mapa inverso código -> regional (apenas das regionais base)
-code_to_regional: Dict[int, str] = {}
-for reg_name, codes in regionais_base.items():
-    for c in codes:
-        code_to_regional[c] = reg_name
+# mapa inverso código -> regional
+code_to_regional: Dict[int, str] = {c: reg for reg, codes in regionais_base.items() for c in codes}
 
 # -------------------------------------------------------------------
 # Normalização e mapeamento de Time
@@ -181,29 +158,17 @@ def map_to_team_or_self(responsavel: str) -> str:
 
 # -------------------------
 # Autenticação
-# -------------------------
-# Segredos (compat: [auth] OU chaves planas; c/ fallback em envvars)
-def get_auth() -> dict:
-    # 1) Tenta bloco [auth] em st.secrets
-    if hasattr(st, "secrets") and "auth" in st.secrets:
-        sect = st.secrets["auth"]
-        bearer = (sect.get("INTERCOM_BEARER")).strip()
-        base   = (sect.get("INTERCOM_BASE_URL")).strip()
-        ver    = (sect.get("INTERCOM_VERSION")).strip()
-
-    if not bearer:
-        raise RuntimeError(
-            "INTERCOM_BEARER ausente. Defina em 'Configurações → Advanced settings → Secrets' do Streamlit Cloud."
-        )
-    return {
-        "INTERCOM_BEARER": bearer,
-        "INTERCOM_BASE_URL": base,
-        "INTERCOM_VERSION": ver,
-    }
+def get_auth():
+    if not getattr(st, "secrets", None) or "auth" not in st.secrets:
+        raise RuntimeError("Segredos não encontrados. No Streamlit, crie .streamlit/secrets.toml com [auth].")
+    auth = st.secrets["auth"]
+    if not (auth.get("INTERCOM_BEARER")):
+        raise RuntimeError("Chave ausente em [auth]: INTERCOM_BEARER")
+    return auth
 
 def _headers(auth: dict) -> dict:
     return {
-        "Authorization": f"Bearer {auth['INTERCOM_BEARER']}",
+        "Authorization": f"Bearer {(auth.get('INTERCOM_BEARER') or '').strip()}",
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Intercom-Version": auth.get("INTERCOM_VERSION", "2.14"),
@@ -259,15 +224,17 @@ def fetch_conversations(base_url: str, hdrs: dict) -> List[dict]:
     return slim
 
 # -------------------------
-# Contacts: cache simples em memória (por execução)
-_CONTACT_CITY_CACHE: Dict[str, Optional[str]] = {}
+# Contacts: cache simples por execução (Cidade/Lugar)
+_CONTACT_INFO_CACHE: Dict[str, Dict[str, Optional[str]]] = {}
 
-def fetch_contact_city(base_url: str, hdrs: dict, contact_id: str) -> Optional[str]:
-    """Busca city via /contacts/{id}. Cacheia resultados por execução."""
+def fetch_contact_info(base_url: str, hdrs: dict, contact_id: str) -> Dict[str, Optional[str]]:
+    """
+    Retorna {"Cidade": <location.city ou "">, "Filial": <custom_attributes['Lugar'] ou "">}.
+    """
     if not contact_id:
-        return None
-    if contact_id in _CONTACT_CITY_CACHE:
-        return _CONTACT_CITY_CACHE[contact_id]
+        return {"Cidade": "", "Filial": ""}
+    if contact_id in _CONTACT_INFO_CACHE:
+        return _CONTACT_INFO_CACHE[contact_id]
 
     url = f"{base_url}/contacts/{contact_id}"
     try:
@@ -275,17 +242,20 @@ def fetch_contact_city(base_url: str, hdrs: dict, contact_id: str) -> Optional[s
         r.raise_for_status()
         data = r.json() or {}
         loc = data.get("location") or {}
-        city = loc.get("city")
-        _CONTACT_CITY_CACHE[contact_id] = city
-        return city
+        cidade = loc.get("city") or ""
+        ca = data.get("custom_attributes") or {}
+        filial = ca.get("Lugar") or ca.get("lugar") or ca.get("LUGAR") or ""
+        out = {"Cidade": cidade, "Filial": filial}
+        _CONTACT_INFO_CACHE[contact_id] = out
+        return out
     except Exception:
-        _CONTACT_CITY_CACHE[contact_id] = None
-        return None
+        out = {"Cidade": "", "Filial": ""}
+        _CONTACT_INFO_CACHE[contact_id] = out
+        return out
 
 # -------------------------
-# Linhas detalhadas (um registro por ticket aberto) já com Regional
-@st.cache_data(ttl=REFRESH_SECS, show_spinner=False)
-def get_rows_with_regional() -> pd.DataFrame:
+# Função de coleta consolidada (sem UI; usada pelo duplo buffer)
+def collect_rows() -> pd.DataFrame:
     auth = get_auth()
     base_url = (auth.get("INTERCOM_BASE_URL") or "https://api.intercom.io").rstrip("/")
     hdrs = _headers(auth)
@@ -295,11 +265,31 @@ def get_rows_with_regional() -> pd.DataFrame:
 
     now_ts = datetime.now(timezone.utc).timestamp()
     rows = []
+
+    # Precarrega infos de contato e regionais
+    contact_map: Dict[str, Dict[str, Optional[str]]] = {}
+
+    for obj in slim:
+        contacts_struct = obj.get("contacts") or {}
+        contact_list = contacts_struct.get("contacts") or []
+        contact_id = (contact_list[0] or {}).get("id") if (contact_list and isinstance(contact_list, list)) else None
+        cinfo = fetch_contact_info(base_url, hdrs, contact_id) if contact_id else {"Cidade": "", "Filial": ""}
+        filial_name = cinfo.get("Filial") or ""
+        filial_code = filiais.get(filial_name) if filial_name else None
+        regional = code_to_regional.get(filial_code, "NÃO MAPEADO")
+
+        contact_map[contact_id or ""] = {
+            "Cidade": cinfo.get("Cidade", ""),
+            "Filial": filial_name,
+            "FilialCodigo": filial_code if filial_code is not None else "",
+            "Regional": regional,
+        }
+
     for obj in slim:
         if obj.get("state") != "open" or obj.get("open") is not True:
             continue
 
-        # TMA
+        # TMA (sempre em UTC para cálculo)
         try:
             ca = float(obj.get("created_at"))
         except Exception:
@@ -314,100 +304,12 @@ def get_rows_with_regional() -> pd.DataFrame:
             continue
         time_group = map_to_team_or_self(resp)
 
-        # Contact ID (pega o primeiro, se existir)
+        # Contact
         contacts_struct = obj.get("contacts") or {}
         contact_list = contacts_struct.get("contacts") or []
-        contact_id = None
-        if contact_list and isinstance(contact_list, list):
-            cid = contact_list[0] or {}
-            contact_id = cid.get("id")
+        contact_id = (contact_list[0] or {}).get("id") if (contact_list and isinstance(contact_list, list)) else None
 
-        # City -> Filial -> Código -> Regional
-        city = fetch_contact_city(base_url, hdrs, contact_id) if contact_id else None
-        city_norm = _norm(city) if city else ""
-        filial_code = CITY2CODE.get(city_norm)
-        filial_name = next((n for n, c in filiais.items() if c == filial_code), f"Mottu {city}" if city else "")
-        regional = code_to_regional.get(filial_code, "NÃO MAPEADO")
-
-        rows.append({
-            "Time": time_group,
-            "TMA_individual": tma_min,
-            "Responsavel": resp,
-            "ContactId": contact_id,
-            "Cidade": city or "",
-            "Filial": filial_name or "",
-            "FilialCodigo": filial_code if filial_code is not None else "",
-            "Regional": regional,
-        })
-
-    # garante colunas mesmo se vazio
-    cols = ["Time", "TMA_individual", "Responsavel", "ContactId", "Cidade", "Filial", "FilialCodigo", "Regional"]
-    return pd.DataFrame(rows, columns=cols)
-
-def load_rows_with_progress() -> pd.DataFrame:
-    bar = st.progress(0, text="Carregando dados…")
-
-    auth = get_auth()
-    base_url = (auth.get("INTERCOM_BASE_URL") or "https://api.intercom.io").rstrip("/")
-    hdrs = _headers(auth)
-
-    # 1) Conversas
-    bar.progress(10, text="Carregando conversas…")
-    slim = fetch_conversations(base_url, hdrs)
-
-    # 2) Admins
-    bar.progress(40, text="Mapeando responsáveis…")
-    admin_map = fetch_admin_map(base_url, hdrs)
-
-    # 3) Contatos/regionais (primeiro contato de cada conversa)
-    bar.progress(70, text="Obtendo cidade/filial/regional…")
-    contact_map = {}
-    for obj in slim:
-        contacts_struct = obj.get("contacts") or {}
-        contact_list = contacts_struct.get("contacts") or []
-        contact_id = None
-        if contact_list and isinstance(contact_list, list):
-            cid = contact_list[0] or {}
-            contact_id = cid.get("id")
-        city = fetch_contact_city(base_url, hdrs, contact_id) if contact_id else None
-        city_norm = _norm(city) if city else ""
-        filial_code = CITY2CODE.get(city_norm)
-        filial_name = next((n for n, c in filiais.items() if c == filial_code), f"Mottu {city}" if city else "")
-        regional = code_to_regional.get(filial_code, "NÃO MAPEADO")
-        contact_map[contact_id] = {
-            "Cidade": city or "",
-            "Filial": filial_name or "",
-            "FilialCodigo": filial_code if filial_code is not None else "",
-            "Regional": regional,
-        }
-
-    # 4) Monta DataFrame final
-    bar.progress(90, text="Finalizando…")
-    now_ts = datetime.now(timezone.utc).timestamp()
-    rows = []
-    for obj in slim:
-        if obj.get("state") != "open" or obj.get("open") is not True:
-            continue
-        try:
-            ca = float(obj.get("created_at"))
-        except Exception:
-            continue
-        tma_min = max(0.0, (now_ts - ca) / 60.0)
-        aid = obj.get("admin_assignee_id")
-        admin_name = admin_map.get(str(aid)) if aid is not None else None
-        resp = admin_name or "Não atribuído"
-        if resp in EXCLUDE_ADMINS:
-            continue
-        time_group = map_to_team_or_self(resp)
-
-        contacts_struct = obj.get("contacts") or {}
-        contact_list = contacts_struct.get("contacts") or []
-        contact_id = None
-        if contact_list and isinstance(contact_list, list):
-            cid = contact_list[0] or {}
-            contact_id = cid.get("id")
-
-        cinfo = contact_map.get(contact_id, {})
+        cinfo = contact_map.get(contact_id or "", {})
         rows.append({
             "Time": time_group,
             "TMA_individual": tma_min,
@@ -419,7 +321,6 @@ def load_rows_with_progress() -> pd.DataFrame:
             "Regional": cinfo.get("Regional", "NÃO MAPEADO"),
         })
 
-    bar.progress(100, text="Concluído")
     cols = ["Time", "TMA_individual", "Responsavel", "ContactId", "Cidade", "Filial", "FilialCodigo", "Regional"]
     return pd.DataFrame(rows, columns=cols)
 
@@ -427,23 +328,14 @@ def load_rows_with_progress() -> pd.DataFrame:
 # UI
 st.set_page_config(page_title="Torre de Controle - CS Interno", layout="wide")
 
-# Auto-refresh do navegador (rerun) a cada 10 minutos
-st.markdown(f"<meta http-equiv='refresh' content='{REFRESH_SECS}'>", unsafe_allow_html=True)
-
-# Compacta tabela para caber mais linhas
+# Estilo compacto
 st.markdown(
     """
     <style>
-      div[data-testid="stDataFrame"] table {
-        font-size: 14px;
-        line-height: 1.1;
-      }
-      div[data-testid="stDataFrame"] td, 
-      div[data-testid="stDataFrame"] th {
-        padding-top: 6px !important;
-        padding-bottom: 6px !important;
-        padding-left: 6px !important;
-        padding-right: 6px !important;
+      div[data-testid="stDataFrame"] table { font-size: 14px; line-height: 1.1; }
+      div[data-testid="stDataFrame"] td, div[data-testid="stDataFrame"] th {
+        padding-top: 6px !important; padding-bottom: 6px !important;
+        padding-left: 6px !important; padding-right: 6px !important;
       }
     </style>
     """,
@@ -452,42 +344,48 @@ st.markdown(
 
 st.title("Torre de Controle - CS Interno")
 
-st.caption(f"Última atualização: {datetime.now().strftime('%H:%M:%S')}")
+# Horário exibido com ajuste -3h (somente para exibição)
+agora_minus3 = datetime.now(timezone.utc) - timedelta(hours=3)
+st.caption(f"Atualiza automaticamente a cada 10 minutos • Última atualização em: {agora_minus3.strftime('%d/%m/%Y %H:%M:%S')}")
 
-# Carrega linhas detalhadas
-now = time.time()
-if "rows_df" not in st.session_state or "expires_at" not in st.session_state or now >= st.session_state["expires_at"]:
-    rows_df = load_rows_with_progress()          # barra única
-    st.session_state["rows_df"] = rows_df
-    st.session_state["expires_at"] = now + REFRESH_SECS
-else:
-    rows_df = st.session_state["rows_df"]
+# Placeholders estáveis
+progress_ph = st.empty()
+subtitle_ph = st.empty()  # <--- subtítulo ANTES da tabela
+table_ph = st.empty()
 
-# -------------------------
-# Filtro por REGIONAL (somente visual)
+# Persistência da seleção de Regional (ANTES da tabela)
 regionais_disponiveis = ["Todos"] + sorted(list(regionais_ui.keys())) + ["NÃO MAPEADO"]
-regional_sel = st.selectbox("Filtrar por Regional", options=regionais_disponiveis, index=0)
+regional_sel = st.selectbox(
+    "Filtrar por Regional",
+    options=regionais_disponiveis,
+    index=regionais_disponiveis.index(st.session_state.get("regional_sel_memory", "Todos"))
+)
+st.session_state["regional_sel_memory"] = regional_sel
 
-if regional_sel != "Todos":
-    rows_df = rows_df.loc[rows_df["Regional"] == regional_sel].copy()
+def render_table(df: pd.DataFrame):
+    """Aplica agregação/estilo e desenha no table_ph, mantendo o subtítulo ANTES da tabela."""
+    df = df.copy()
+    if regional_sel != "Todos":
+        df = df.loc[df["Regional"] == regional_sel].copy()
 
-# -------------------------
-# Agregação por TIME sobre o subconjunto filtrado
-if rows_df.empty:
-    st.subheader("Dados em tempo real")
-    st.info("Sem dados para exibir.")
-else:
+    if df.empty:
+        subtitle_ph.empty()  # limpa subtítulo quando não há dados
+        with table_ph.container():
+            st.subheader("Dados em tempo real")
+            st.info("Sem dados para exibir.")
+        return
+
     agg = (
-        rows_df.groupby("Time", dropna=False)
-               .agg(Qtd=("TMA_individual", "size"), TMA=("TMA_individual", "mean"))
-               .reset_index()
+        df.groupby("Time", dropna=False)
+          .agg(Qtd=("TMA_individual", "size"), TMA=("TMA_individual", "mean"))
+          .reset_index()
     )
     agg["TMA"] = pd.to_numeric(agg["TMA"], errors="coerce").round(2)
     agg = agg.sort_values(["TMA"], ascending=False, kind="stable").reset_index(drop=True)
 
-    st.caption("Atualiza a cada 10 minutos. Tabela ordenada por TMA (min) do maior para o menor.")
+    # Subtítulo ANTES da tabela
+    subtitle_ph.caption("Tabela ordenada por TMA (min) do maior para o menor.")
 
-    # Renderização com gradiente branco→vermelho no TMA
     df_display = agg.loc[:, ["Time", "Qtd", "TMA"]].copy()
     df_display["Qtd"] = pd.to_numeric(df_display["Qtd"], errors="coerce").fillna(0).astype(int)
     df_display["TMA"] = pd.to_numeric(df_display["TMA"], errors="coerce")
@@ -501,7 +399,6 @@ else:
         rng = vmax - vmin
         if rng == 0:
             return ["background-color: rgb(255,255,255); color: black;"] * len(col)
-
         styles = []
         for v in ser:
             if v is None or math.isnan(v) or not math.isfinite(v):
@@ -516,15 +413,36 @@ else:
     styled = (
         df_display.style
         .format({"Qtd": "{:d}", "TMA": "{:.2f}"})
-        .apply(red_white_gradient, subset=["TMA"])               # TMA com gradiente e texto preto
-        .set_properties(subset=["Time", "Qtd"], **{"color": "white"})  # Time e Qtd com texto branco
-        .set_properties(subset=["TMA"], **{"color": "black"})          # reforço texto preto em TMA
+        .apply(red_white_gradient, subset=["TMA"])
+        .set_properties(subset=["Time", "Qtd"], **{"color": "white"})
+        .set_properties(subset=["TMA"], **{"color": "black"})
     )
 
-    st.dataframe(
-        styled,
-        width="stretch",
-        height=1000,
-        hide_index=True,
-        key="grid_times"
-    )
+    with table_ph.container():
+        st.dataframe(styled, width="stretch", height=1000, hide_index=True, key="grid_times")
+
+# Carrega a última tabela conhecida (se houver) para exibir imediatamente
+rows_df_old = st.session_state.get("rows_df")
+if rows_df_old is not None:
+    render_table(rows_df_old)
+
+# Decide se precisa atualizar (cache vencido ou primeira carga)
+now_ts = time.time()
+expired = ("expires_at" not in st.session_state) or (now_ts >= st.session_state["expires_at"])
+if expired or rows_df_old is None:
+    with progress_ph.container():
+        bar = st.progress(0, text="Atualizando…")
+        bar.progress(15, text="Coletando dados…")
+    try:
+        rows_df_new = collect_rows()
+        progress_ph.progress(85, text="Finalizando…")
+    except Exception as e:
+        progress_ph.empty()
+        st.error(f"Falha na atualização: {e}")
+    else:
+        st.session_state["rows_df"] = rows_df_new
+        st.session_state["expires_at"] = now_ts + REFRESH_SECS
+        progress_ph.empty()
+        render_table(rows_df_new)
+else:
+    render_table(rows_df_old)
