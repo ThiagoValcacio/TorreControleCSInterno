@@ -254,26 +254,199 @@ def fetch_contact_info(base_url: str, hdrs: dict, contact_id: str) -> Dict[str, 
         return out
 
 # -------------------------
-# Função de coleta consolidada (sem UI; usada pelo duplo buffer)
-def collect_rows() -> pd.DataFrame:
+# UI
+st.set_page_config(page_title="Torre de Controle - CS Interno", layout="wide")
+
+# Autorefresh a cada 10 min (rerun sem interação)
+try:
+    from streamlit_autorefresh import st_autorefresh
+    st_autorefresh(interval=600_000, key="periodic_refresh")
+except Exception:
+    pass
+
+# Estilo compacto
+st.markdown(
+    """
+    <style>
+      div[data-testid="stDataFrame"] table { font-size: 14px; line-height: 1.1; }
+      div[data-testid="stDataFrame"] td, div[data-testid="stDataFrame"] th {
+        padding-top: 6px !important; padding-bottom: 6px !important;
+        padding-left: 6px !important; padding-right: 6px !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Estado do horário da última atualização (UTC epoch) — só muda ao final da coleta
+if "last_refresh_ts" not in st.session_state:
+    st.session_state["last_refresh_ts"] = None
+
+def fmt_last_refresh_minus3() -> str:
+    ts = st.session_state.get("last_refresh_ts")
+    if ts is None:
+        return "—"
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc) - timedelta(hours=3)
+    return dt.strftime("%d/%m/%Y %H:%M:%S")
+
+# ===== Cabeçalho (título + relógio) =====
+header = st.container()
+with header:
+    st.title("Torre de Controle - CS Interno")
+    caption_ph = st.empty()  # placeholder para o relógio
+
+def update_caption():
+    caption_ph.caption(f"Atualiza automaticamente a cada 10 minutos • Última atualização em: {fmt_last_refresh_minus3()}")
+
+# Renderiza o relógio imediatamente (pode ser “—” na 1ª carga)
+update_caption()
+
+# ===== Barra de progresso no topo (visível durante a atualização) =====
+progress_ph = st.empty()
+
+# ===== Filtro (sempre antes da tabela) =====
+top_controls = st.container()
+with top_controls:
+    regionais_disponiveis = ["Todos"] + sorted(list(regionais_ui.keys())) + ["NÃO MAPEADO"]
+    mem = st.session_state.get("regional_sel_memory", "Todos")
+    try:
+        default_idx = regionais_disponiveis.index(mem) if mem in regionais_disponiveis else 0
+    except Exception:
+        default_idx = 0
+    regional_sel = st.selectbox("Filtrar por Regional", options=regionais_disponiveis, index=default_idx)
+    st.session_state["regional_sel_memory"] = regional_sel
+
+# ===== Subtítulo + Tabela (congeladas) =====
+subtitle_ph = st.empty()   # legenda da tabela
+table_ph = st.empty()      # grade da tabela
+
+def render_table(df: pd.DataFrame):
+    """Agrega/estiliza e desenha a tabela de forma defensiva."""
+    df = df.copy()
+
+    # Filtro de regional
+    if regional_sel != "Todos":
+        df = df.loc[df["Regional"] == regional_sel].copy()
+
+    # Se não há dados, mostra mensagem
+    if df.empty:
+        subtitle_ph.empty()
+        with table_ph.container():
+            st.subheader("Dados em tempo real")
+            st.info("Sem dados para exibir.")
+        return
+
+    # Agregação esperada: Time | Qtd | TMA
+    agg = (
+        df.groupby("Time", dropna=False)
+          .agg(Qtd=("TMA_individual", "size"), TMA=("TMA_individual", "mean"))
+          .reset_index()
+    )
+
+    # Normaliza tipos
+    agg["Qtd"] = pd.to_numeric(agg["Qtd"], errors="coerce").fillna(0).astype(int)
+    agg["TMA"] = pd.to_numeric(agg["TMA"], errors="coerce").round(2)
+
+    # Ordenação
+    agg = agg.sort_values(["TMA"], ascending=False, kind="stable").reset_index(drop=True)
+
+    # Subtítulo antes da grade
+    subtitle_ph.caption("Tabela ordenada por TMA (min) do maior para o menor.")
+
+    # Conjunto de colunas a exibir (não use nomes antigos como 'Qtd Tickets Abertos')
+    cols = [c for c in ["Time", "Qtd", "TMA"] if c in agg.columns]
+    df_display = agg.loc[:, cols].copy()
+
+    # Função de gradiente segura
+    def red_white_gradient(col: pd.Series):
+        ser = pd.to_numeric(col, errors="coerce")
+        vmin = float(ser.min())
+        vmax = float(ser.max())
+        if math.isnan(vmin) or math.isnan(vmax) or not math.isfinite(vmin) or not math.isfinite(vmax):
+            return ["background-color: rgb(255,255,255); color: black;"] * len(col)
+        rng = vmax - vmin
+        if rng == 0:
+            return ["background-color: rgb(255,255,255); color: black;"] * len(col)
+        styles = []
+        for v in ser:
+            if v is None or math.isnan(v) or not math.isfinite(v):
+                styles.append("")
+                continue
+            t = (v - vmin) / rng
+            t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+            g = int(round(255 * (1.0 - t)))  # branco→vermelho
+            styles.append(f"background-color: rgb(255,{g},{g}); color: black;")
+        return styles
+
+    # Styler defensivo
+    styled = df_display.style
+
+    # Formatação apenas para colunas existentes
+    fmt_map = {}
+    if "Qtd" in df_display.columns:
+        fmt_map["Qtd"] = "{:d}"
+    if "TMA" in df_display.columns:
+        fmt_map["TMA"] = "{:.2f}"
+    if fmt_map:
+        styled = styled.format(fmt_map)
+
+    # Gradiente apenas se 'TMA' existir
+    if "TMA" in df_display.columns:
+        styled = styled.apply(red_white_gradient, subset=["TMA"])
+
+    # Cores de texto (aplica somente no que existir)
+    if "Time" in df_display.columns:
+        styled = styled.set_properties(subset=["Time"], **{"color": "white"})
+    if "Qtd" in df_display.columns:
+        styled = styled.set_properties(subset=["Qtd"], **{"color": "white"})
+    if "TMA" in df_display.columns:
+        styled = styled.set_properties(subset=["TMA"], **{"color": "black"})
+
+    # Renderização
+    with table_ph.container():
+        st.dataframe(styled, width="stretch", height=1000, hide_index=True, key="grid_times")
+
+# Exibe a última tabela conhecida; se não houver timestamp ainda, marca referência
+rows_df_old = st.session_state.get("rows_df")
+if rows_df_old is not None and st.session_state.get("last_refresh_ts") is None:
+    st.session_state["last_refresh_ts"] = time.time()
+    update_caption()
+if rows_df_old is not None:
+    render_table(rows_df_old)
+
+# ===== Coleta com etapas e atualização do relógio =====
+def collect_rows(progress_cb=None) -> pd.DataFrame:
+    def step(p, txt):
+        if callable(progress_cb):
+            try: progress_cb(int(p), txt)
+            except Exception: pass
+
     auth = get_auth()
     base_url = (auth.get("INTERCOM_BASE_URL") or "https://api.intercom.io").rstrip("/")
     hdrs = _headers(auth)
 
+    # 1) Conversas
+    step(10, "Carregando conversas…")
     slim = fetch_conversations(base_url, hdrs)
+
+    # 2) Responsáveis
+    step(35, "Mapeando responsáveis…")
     admin_map = fetch_admin_map(base_url, hdrs)
 
-    now_ts = datetime.now(timezone.utc).timestamp()
-    rows = []
-
-    # Precarrega infos de contato e regionais
+    # 3) Contatos → Lugar/Filial/Regional
+    step(55, "Obtendo Lugar/Filial/Regional…")
     contact_map: Dict[str, Dict[str, Optional[str]]] = {}
-
-    for obj in slim:
+    total = max(1, len(slim))
+    for i, obj in enumerate(slim, start=1):
         contacts_struct = obj.get("contacts") or {}
         contact_list = contacts_struct.get("contacts") or []
         contact_id = (contact_list[0] or {}).get("id") if (contact_list and isinstance(contact_list, list)) else None
-        cinfo = fetch_contact_info(base_url, hdrs, contact_id) if contact_id else {"Cidade": "", "Filial": ""}
+
+        if contact_id and contact_id not in _CONTACT_INFO_CACHE:
+            cinfo = fetch_contact_info(base_url, hdrs, contact_id)
+        else:
+            cinfo = _CONTACT_INFO_CACHE.get(contact_id, {"Cidade": "", "Filial": ""}) if contact_id else {"Cidade": "", "Filial": ""}
+
         filial_name = cinfo.get("Filial") or ""
         filial_code = filiais.get(filial_name) if filial_name else None
         regional = code_to_regional.get(filial_code, "NÃO MAPEADO")
@@ -285,18 +458,24 @@ def collect_rows() -> pd.DataFrame:
             "Regional": regional,
         }
 
+        if i % 5 == 0 or i == total:
+            frac = i / total
+            pct = 55 + int(30 * frac)  # 55% → 85%
+            step(pct, f"Obtendo Lugar/Filial/Regional… ({i}/{total})")
+
+    # 4) Montagem
+    step(90, "Finalizando…")
+    now_ts = datetime.now(timezone.utc).timestamp()
+    rows = []
     for obj in slim:
         if obj.get("state") != "open" or obj.get("open") is not True:
             continue
-
-        # TMA (sempre em UTC para cálculo)
         try:
             ca = float(obj.get("created_at"))
         except Exception:
             continue
         tma_min = max(0.0, (now_ts - ca) / 60.0)
 
-        # Responsável -> Time
         aid = obj.get("admin_assignee_id")
         admin_name = admin_map.get(str(aid)) if aid is not None else None
         resp = admin_name or "Não atribuído"
@@ -304,7 +483,6 @@ def collect_rows() -> pd.DataFrame:
             continue
         time_group = map_to_team_or_self(resp)
 
-        # Contact
         contacts_struct = obj.get("contacts") or {}
         contact_list = contacts_struct.get("contacts") or []
         contact_id = (contact_list[0] or {}).get("id") if (contact_list and isinstance(contact_list, list)) else None
@@ -322,127 +500,35 @@ def collect_rows() -> pd.DataFrame:
         })
 
     cols = ["Time", "TMA_individual", "Responsavel", "ContactId", "Cidade", "Filial", "FilialCodigo", "Regional"]
+    step(100, "Concluído")
     return pd.DataFrame(rows, columns=cols)
 
-# -------------------------
-# UI
-st.set_page_config(page_title="Torre de Controle - CS Interno", layout="wide")
-
-# Estilo compacto
-st.markdown(
-    """
-    <style>
-      div[data-testid="stDataFrame"] table { font-size: 14px; line-height: 1.1; }
-      div[data-testid="stDataFrame"] td, div[data-testid="stDataFrame"] th {
-        padding-top: 6px !important; padding-bottom: 6px !important;
-        padding-left: 6px !important; padding-right: 6px !important;
-      }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.title("Torre de Controle - CS Interno")
-
-# Horário exibido com ajuste -3h (somente para exibição)
-agora_minus3 = datetime.now(timezone.utc) - timedelta(hours=3)
-st.caption(f"Atualiza automaticamente a cada 10 minutos • Última atualização em: {agora_minus3.strftime('%d/%m/%Y %H:%M:%S')}")
-
-# Placeholders estáveis
-progress_ph = st.empty()
-subtitle_ph = st.empty()  # <--- subtítulo ANTES da tabela
-table_ph = st.empty()
-
-# Persistência da seleção de Regional (ANTES da tabela)
-regionais_disponiveis = ["Todos"] + sorted(list(regionais_ui.keys())) + ["NÃO MAPEADO"]
-regional_sel = st.selectbox(
-    "Filtrar por Regional",
-    options=regionais_disponiveis,
-    index=regionais_disponiveis.index(st.session_state.get("regional_sel_memory", "Todos"))
-)
-st.session_state["regional_sel_memory"] = regional_sel
-
-def render_table(df: pd.DataFrame):
-    """Aplica agregação/estilo e desenha no table_ph, mantendo o subtítulo ANTES da tabela."""
-    df = df.copy()
-    if regional_sel != "Todos":
-        df = df.loc[df["Regional"] == regional_sel].copy()
-
-    if df.empty:
-        subtitle_ph.empty()  # limpa subtítulo quando não há dados
-        with table_ph.container():
-            st.subheader("Dados em tempo real")
-            st.info("Sem dados para exibir.")
-        return
-
-    agg = (
-        df.groupby("Time", dropna=False)
-          .agg(Qtd=("TMA_individual", "size"), TMA=("TMA_individual", "mean"))
-          .reset_index()
-    )
-    agg["TMA"] = pd.to_numeric(agg["TMA"], errors="coerce").round(2)
-    agg = agg.sort_values(["TMA"], ascending=False, kind="stable").reset_index(drop=True)
-
-    # Subtítulo ANTES da tabela
-    subtitle_ph.caption("Tabela ordenada por TMA (min) do maior para o menor.")
-
-    df_display = agg.loc[:, ["Time", "Qtd", "TMA"]].copy()
-    df_display["Qtd"] = pd.to_numeric(df_display["Qtd"], errors="coerce").fillna(0).astype(int)
-    df_display["TMA"] = pd.to_numeric(df_display["TMA"], errors="coerce")
-
-    def red_white_gradient(col: pd.Series):
-        ser = pd.to_numeric(col, errors="coerce")
-        vmin = float(ser.min())
-        vmax = float(ser.max())
-        if math.isnan(vmin) or math.isnan(vmax) or not math.isfinite(vmin) or not math.isfinite(vmax):
-            return ["background-color: rgb(255,255,255); color: black;"] * len(col)
-        rng = vmax - vmin
-        if rng == 0:
-            return ["background-color: rgb(255,255,255); color: black;"] * len(col)
-        styles = []
-        for v in ser:
-            if v is None or math.isnan(v) or not math.isfinite(v):
-                styles.append("")
-                continue
-            t = (v - vmin) / rng
-            t = 0.0 if t < 0 else (1.0 if t > 1 else t)
-            g = int(round(255 * (1.0 - t)))  # branco -> vermelho
-            styles.append(f"background-color: rgb(255,{g},{g}); color: black;")
-        return styles
-
-    styled = (
-        df_display.style
-        .format({"Qtd": "{:d}", "TMA": "{:.2f}"})
-        .apply(red_white_gradient, subset=["TMA"])
-        .set_properties(subset=["Time", "Qtd"], **{"color": "white"})
-        .set_properties(subset=["TMA"], **{"color": "black"})
-    )
-
-    with table_ph.container():
-        st.dataframe(styled, width="stretch", height=1000, hide_index=True, key="grid_times")
-
-# Carrega a última tabela conhecida (se houver) para exibir imediatamente
-rows_df_old = st.session_state.get("rows_df")
-if rows_df_old is not None:
-    render_table(rows_df_old)
-
-# Decide se precisa atualizar (cache vencido ou primeira carga)
+# Expiração (10 min)
 now_ts = time.time()
 expired = ("expires_at" not in st.session_state) or (now_ts >= st.session_state["expires_at"])
+
 if expired or rows_df_old is None:
-    with progress_ph.container():
-        bar = st.progress(0, text="Atualizando…")
-        bar.progress(15, text="Coletando dados…")
+    # Barra de progresso VISÍVEL no topo com etapas reais
+    bar = progress_ph.progress(0, text="Preparando atualização…")
+
+    def progress_cb(pct, text):
+        try: bar.progress(int(pct), text=text)
+        except Exception: pass
+
     try:
-        rows_df_new = collect_rows()
-        progress_ph.progress(85, text="Finalizando…")
+        rows_df_new = collect_rows(progress_cb=progress_cb)
     except Exception as e:
         progress_ph.empty()
         st.error(f"Falha na atualização: {e}")
     else:
+        # Grava novo estado e horário REAL da atualização
         st.session_state["rows_df"] = rows_df_new
-        st.session_state["expires_at"] = now_ts + REFRESH_SECS
+        st.session_state["expires_at"] = time.time() + REFRESH_SECS
+        st.session_state["last_refresh_ts"] = time.time()
+        # Atualiza relógio imediatamente após terminar
+        update_caption()
         progress_ph.empty()
         render_table(rows_df_new)
 else:
-    render_table(rows_df_old)
+    # Ainda válido: mantém tabela congelada, sem barra
+    pass
