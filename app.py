@@ -201,13 +201,6 @@ st.set_page_config(page_title="Torre de Controle - CS Interno", layout="wide")
 # Rerun periódico
 autorefresh_counter = st_autorefresh(interval=REFRESH_SECS * 1000, key="periodic_refresh")
 
-# Debug temporário: ver se o autorefresh está rodando e qual o expires_at
-st.caption(
-    f"(debug) refresh_counter={autorefresh_counter} • "
-    f"expires_at={st.session_state.get('expires_at')} • "
-    f"now_ts={int(time.time())}"
-)
-
 # Estilo compacto
 st.markdown(
     """
@@ -577,3 +570,4 @@ if expired or rows_df_old is None:
 else:
     # Ainda válido: mantém tabela congelada, sem barra
     pass
+
