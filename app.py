@@ -16,6 +16,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from map import TEAM_MAP_RAW, filiais, regionais_base
+
 # Tenta autorefresh sem recarregar a página
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -28,110 +30,6 @@ PER_PAGE = 150
 REFRESH_SECS = 600  # 10 minutos
 EXCLUDE_ADMINS = {"Suporte Mottu", "Não atribuído"}
 
-# -------------------------------------------------------------------
-# MAPA HARDCODED: "Responsável" -> "Time"
-TEAM_MAP_RAW: Dict[str, str] = {
-    "App": "APP",
-    "Gerbert Santos Santos": "APP",
-    "Suporte Mottu": "BOT",
-    "Pedro Henrique Stival": "CUSTOMER SUCCESS",
-    "Thaís": "STORE",
-    "Beatriz": "CUSTOMER SUCCESS",
-    "Thiago Valcácio de Assis": "CS DUVIDAS",
-    "João Pradella": "VENDAS",
-    "Time de Acidentes": "FLEET ACIDENTES",
-    "Felipe Ryu Nakamura": "FLEET DOCUMENTACOES",
-    "Time Alerta": "FLEET DOCUMENTACOES",
-    "Time de Ocorrências": "FLEET DOCUMENTACOES",
-    "rogerio henrique correia filho": "FLEET PATIO",
-    "Lucas Araújo Silva": "FLEET SUPORTE DE RUA",
-    "Cristtiane Moreira": "FLEET SUPORTE DE RUA",
-    "Gilberto Silva": "FLEET SUPORTE DE RUA",
-    "Time Suporte de Rua": "FLEET SUPORTE DE RUA",
-    "Engenharia": "MAINTENANCE",
-    "MinhaMottu": "MINHA MOTTU",
-    "João Ferrarini": "CREDITO",
-    "Multas": "MULTAS",
-    "Operações": "OPERATIONS",
-    "Pagamentos": "PAYMENTS",
-    "Bárbara Hülse": "PEOPLE",
-    "Regulatório": "REGULATORIO",
-    "Felipe Chao": "MINHA MOTTU",
-    "Supply Chain": "SUPPLY",
-    "Mottu Store": "STORE",
-    "Ricardo Goes": "TOTEM ATTENDANCE",
-    "Camila Camargo": "STORE",
-    "Giulia": "OPERATIONS",
-    "Patrick Freitas": "PARCERIAS E BENEFÍCIOS",
-    "Apreensões - Pátio": "FLEET DOCUMENTACOES",
-    "Thiago Castro": "FLEET PATIO",
-    "Yasmin": "MINHA MOTTU",
-    "Time de Acidentes": "SINISTRO"
-}
-
-# -------------------------------------------------------------------
-# FILIAIS (nome -> código) e REGIONAIS (nome -> lista de códigos) hardcoded
-filiais = {
-    "Mottu Abaetetuba": 282, "Mottu Alagoinhas": 110, "Mottu Ananindeua": 122, "Mottu Anápolis": 58,
-    "Mottu Aparecida de Goiânia": 123, "Mottu Aracaju": 29, "Mottu Aracati": 274, "Mottu Arapiraca": 52,
-    "Mottu Araçatuba": 109, "Mottu Avaré": 454, "Mottu Barreiras": 259, "Mottu Bauru": 175,
-    "Mottu Bayeux": 384, "Mottu Belo Horizonte": 3, "Mottu Belém": 18, "Mottu Blumenau": 356,
-    "Mottu Boa Vista": 61, "Mottu Bragança": 238, "Mottu Brasília": 10, "Mottu Vila Leopoldina": 477,
-    "Mottu Cabo Frio": 283, "Mottu Camaçari": 173, "Mottu Campina Grande": 38, "Mottu Campinas": 7,
-    "Mottu Campo Grande": 31, "Mottu Campos dos Goytacazes": 285, "Mottu Caruaru": 39, "Mottu Cascavel": 397,
-    "Mottu Castanhal": 365, "Mottu Caucaia": 458, "Mottu Caxias": 366, "Mottu Caxias do Sul": 69,
-    "Mottu Colatina": 474, "Mottu Contagem": 53, "Mottu Crato": 295, "Mottu Criciúma": 51,
-    "Mottu Cuiabá": 30, "Mottu Curitiba": 4, "Mottu Divinópolis": 174, "Mottu Dourados": 77,
-    "Mottu Duque de Caxias": 469, "Mottu Eunápolis": 417, "Mottu Feira de Santana": 40, "Mottu Florianópolis": 32,
-    "Mottu Fortaleza": 9, "Mottu Franca": 75, "Mottu Fátima": 114, "Mottu Goiânia": 15,
-    "Mottu Governador Valadares": 76, "Mottu Guarulhos": 83, "Mottu Icoaraci": 404, "Mottu Imperatriz": 65,
-    "Mottu Interlagos": 37, "Mottu Ipatinga": 55, "Mottu Ipiranga": 94, "Mottu Ipojuca": 267,
-    "Mottu Itabuna": 116, "Mottu Itajaí": 111, "Mottu Itapetininga": 449, "Mottu Itapipoca": 357,
-    "Mottu Jacarepaguá": 248, "Mottu Jandira": 41, "Mottu Jequié": 271, "Mottu Ji Paraná": 416,
-    "Mottu Joinville": 56, "Mottu João Pessoa": 28, "Mottu Juazeiro": 45, "Juazeiro do Norte": 46,
-    "Mottu Juiz de Fora": 95, "Mottu Jundiaí": 33, "Mottu Lagarto": 462, "Mottu Limão - Zona Norte": 36,
-    "Mottu Linhares": 258, "Mottu Londrina": 49, "Mottu Macapá": 66, "Mottu Macaé": 266,
-    "Mottu Maceió": 22, "Mottu Manaus": 5, "Mottu Marabá": 68, "Mottu Maracanaú": 180,
-    "Mottu Maringá": 50, "Mottu Messejana": 402, "Mottu Mexico CDMX Cien Metros": 85,
-    "Mottu Mexico CDMX Colegio Militar": 11, "Mottu Mexico CDMX Tlalpan": 71, "Mottu Mexico Cancún": 107,
-    "Mottu Mexico Guadalajara": 47, "Mottu Mexico Guadalajara Centro": 113, "Mottu Mexico Los Reyes": 413,
-    "Mottu Mexico Monterrey": 43, "Mottu Mexico Monterrey La Fe": 106, "Mottu Mexico Mérida": 249,
-    "Mottu Mexico Puebla": 48, "Mottu Mexico Querétaro": 42, "Mottu Mexico Toluca": 459,
-    "Mottu Mogi das Cruzes": 86, "Mottu Montes Claros": 57, "Mottu Mossoró": 67, "Mottu Natal": 27,
-    "Mottu Niterói": 105, "Mottu Olinda": 84, "Mottu Palmas": 60, "Mottu Parauapebas": 79,
-    "Mottu Parnamirim": 118, "Mottu Parnaíba": 115, "Mottu Patos": 300, "Mottu Pelotas": 203,
-    "Mottu Petrolina": 309, "Mottu Pindamonhangaba": 311, "Mottu Piracicaba": 44, "Mottu Piçarreira": 183,
-    "Mottu Ponta Grossa": 319, "Mottu Porto Alegre": 8, "Mottu Porto Seguro": 329, "Mottu Porto Velho": 59,
-    "Mottu Pouso Alegre": 472, "Mottu Praia Grande": 82, "Mottu Presidente Prudente": 252,
-    "Mottu Recife": 16, "Mottu Ribeirão Preto": 17, "Mottu Rio Branco": 62, "Mottu Rio Verde": 73,
-    "Mottu Rondonópolis": 70, "Mottu Salvador": 6, "Mottu Santa Maria": 455, "Mottu Santarém": 81,
-    "Mottu Santos": 24, "Mottu Serra": 19, "Mottu Sete Lagoas": 372, "Mottu Sobral": 74,
-    "Mottu Sorocaba": 34, "Mottu São Bernardo": 23, "Mottu São Carlos": 64, "Mottu São José do Rio Preto": 63,
-    "São José dos Campos": 20, "Mottu São Luís": 21, "Mottu São Miguel": 13, "Mottu Taboão": 35,
-    "Mottu Teixeira de Freitas": 284, "Mottu Teresina": 26, "Mottu Toledo": 463, "Mottu Uberaba": 78,
-    "Mottu Uberlândia": 25, "Mottu Valparaíso": 310, "Mottu Vila Isabel": 225, "Mottu Vila Velha": 72,
-    "Mottu Vitória": 405, "Mottu Vitória da Conquista": 80, "Mottu Vitória de Santo Antão": 250,
-    "Mottu Volta Redonda": 396, "Mottu Várzea Grande": 473, "Mottu Foz do Iguaçu": 511, "Mottu Passo Fundo": 522, "Mottu Sinop": 526,
-    "Mottu Itumbiara": 537, "Mottu Lages": 527, "Mottu Patos de Minas": 509,
-    "Mottu Cachoeiro de Itapemirim": 505, "Mottu Cariacica": 489, "Mottu Nossa Senhora do Socorro": 507,
-    "Mottu Anápolis": 58, "Mottu MX Edomex Coacalco": 499,
-    "Mottu México CDMX Iztapalapa": 87, "Mottu Campo Grande - RJ": 497,
-    "Mottu São José do Ribamar": 513, "Mottu São Mateus": 514, "Mottu Ourinhos": 475, "Mottu Nova Iguaçu": 478, "Mottu Madureira": 476,
-    "Mottu Poços de Caldas": 515, "Mottu Americana": 533,
-    "Mottu Marília": 536, "Mottu Botucatu": 523, "Mottu Votuporanga": 542, "Mottu Varginha": 546, "Mottu Chapecó": 544,
-    "Mottu Caxias": 366, "Mottu Ji Paraná": 416, "Mottu Itapetininga": 449,
-    "Mottu Campos dos Goytacazes": 285, "Mottu Ponta Grossa": 319, "Mottu Cascavel": 397
-}
-
-regionais_base = {
-    "Francisco": [61, 5, 59, 30, 4, 29, 28, 26, 27, 6, 21, 114, 9, 84, 16, 122, 18, 17],
-    "Bruno": [31, 62, 66, 25, 68, 63, 81, 79, 38, 8, 3, 72, 19, 15, 118, 40, 46, 39],
-    "Flávio": [82, 24, 35, 94, 83, 36, 23, 41, 477, 37, 13, 86, 7, 33, 34, 44],
-    "Júlio": [22, 52, 57, 74, 67, 78, 116, 60, 65, 32, 111, 404, 56, 10, 45, 309, 53, 58, 123, 105, 402, 183, 173, 180, 20, 75],
-    "Leonardo": [55, 474, 259, 285, 300, 77, 511, 416, 522, 526, 537, 527, 509, 455, 505, 357, 463, 397, 174, 203, 372, 473, 319, 489, 462, 507, 476, 478, 497, 396, 366, 513, 267, 514, 449, 454, 475, 472, 515, 533, 536, 523, 542, 546, 544],
-    "Lucas": [42, 48, 107, 249, 113, 47, 43, 106, 71, 499, 459, 87, 413, 85, 11],
-    "Rogério": [69, 70, 73, 76, 110, 115, 271, 274, 258, 329, 51, 95, 284, 252, 238, 80, 109, 49, 50, 310, 295, 405, 384, 225, 248, 266, 283, 250, 365, 282, 64, 175, 311, 469, 417, 356, 458]
-}
 regionais_ui = dict(regionais_base)
 regionais_ui["Luciano"] = sorted(sum(regionais_base.values(), []))
 
@@ -155,6 +53,36 @@ def map_to_team_or_self(responsavel: str) -> str:
     if norm in TEAM_MAP and str(TEAM_MAP[norm]).strip():
         return str(TEAM_MAP[norm]).strip()
     return responsavel or "Não atribuído"
+
+# -------------------------
+# Helpers para Assunto / TMA / Descrição
+def extract_assunto_from_tags(tags_block: Optional[dict]) -> str:
+    """
+    Escolhe a tag que tem pelo menos 3 hifens '-' e pega o texto entre o 2º e o 3º hífen.
+    Ex.: 'CSINTERNO - ONBOARDING - ERRO AO ESCOLHER PLANO - HUMANO'
+         -> 'ERRO AO ESCOLHER PLANO'
+    """
+    if not tags_block:
+        return ""
+    tags_list = tags_block.get("tags") or []
+    main_name = ""
+    for t in tags_list:
+        name = (t.get("name") or "").strip()
+        if name.count("-") >= 3:
+            main_name = name
+            break
+    if not main_name:
+        return ""
+    parts = main_name.split("-")
+    if len(parts) >= 4:
+        return parts[2].strip()
+    # fallback se vier fora do padrão
+    return main_name
+
+def extract_descricao(conv_custom_attrs: Optional[dict]) -> str:
+    if not conv_custom_attrs:
+        return ""
+    return conv_custom_attrs.get("CS Interno - Descrição") or ""
 
 # -------------------------
 # Autenticação
@@ -186,7 +114,15 @@ def fetch_admin_map(base_url: str, hdrs: dict) -> Dict[str, str]:
     return {str(a.get("id")): a.get("name") for a in admins if a.get("id") is not None}
 
 def fetch_conversations(base_url: str, hdrs: dict) -> List[dict]:
-    """Mantém busca original; adiciona 'contacts' nos fields para pegarmos o contact.id."""
+    """
+    Busca conversas abertas com a tag CSINTERNO.
+    Inclui campos necessários para:
+    - Time (admin_assignee_id -> admin_map -> TEAM_MAP)
+    - Assunto (tags)
+    - Descrição (custom_attributes da conversa)
+    - TMA (statistics)
+    - Contacts (para mapear Regional)
+    """
     url = f"{base_url}/conversations/search"
     base_query = {
         "query": {
@@ -195,12 +131,23 @@ def fetch_conversations(base_url: str, hdrs: dict) -> List[dict]:
                 {"field": "open", "operator": "=", "value": True},
                 {"field": "state", "operator": "=", "value": "open"},
                 {"field": "tag_ids", "operator": "IN", "value": ["11077847"]},
+                {"field": "tag_ids", "operator": "NIN", "value": ["11457806"]}
             ],
         }
     }
     fields_block = {
         "fields": {
-            "conversations": ["id", "created_at", "state", "open", "admin_assignee_id", "contacts"]
+            "conversations": [
+                "id",
+                "created_at",
+                "state",
+                "open",
+                "admin_assignee_id",
+                "contacts",
+                "tags",
+                "statistics",
+                "custom_attributes",
+            ]
         }
     }
 
@@ -216,8 +163,7 @@ def fetch_conversations(base_url: str, hdrs: dict) -> List[dict]:
         batch = data.get("conversations") or data.get("data") or []
         if not batch:
             break
-        keep = {"id", "created_at", "state", "open", "admin_assignee_id", "contacts"}
-        slim.extend({k: c.get(k) for k in keep} for c in batch)
+        slim.extend(batch)
         starting_after = (data.get("pagination") or {}).get("next")
         if not starting_after:
             break
@@ -316,48 +262,79 @@ with top_controls:
     regional_sel = st.selectbox("Filtrar por Regional", options=regionais_disponiveis, index=default_idx)
     st.session_state["regional_sel_memory"] = regional_sel
 
-# ===== Subtítulo + Tabela (congeladas) =====
+# ===== Subtítulo + Cards + Tabela =====
 subtitle_ph = st.empty()   # legenda da tabela
+metrics_ph = st.empty()    # cartões
 table_ph = st.empty()      # grade da tabela
 
 def render_table(df: pd.DataFrame):
-    """Agrega/estiliza e desenha a tabela de forma defensiva."""
+    """
+    View:
+    - Cards: TMA geral (min), Qtd tickets com TMA > 2h
+    - Tabela: tickets com TMA > 20 min, ordenados por TMA (maior→menor),
+      colunas: Time | Filial | Assunto | Descrição | TMA (min).
+    """
     df = df.copy()
 
     # Filtro de regional
     if regional_sel != "Todos":
         df = df.loc[df["Regional"] == regional_sel].copy()
 
-    # Se não há dados, mostra mensagem
+    # Sem dados
     if df.empty:
         subtitle_ph.empty()
+        metrics_ph.empty()
         with table_ph.container():
             st.subheader("Dados em tempo real")
             st.info("Sem dados para exibir.")
         return
 
-    # Agregação esperada: Time | Qtd | TMA
-    agg = (
-        df.groupby("Time", dropna=False)
-          .agg(Qtd=("TMA_individual", "size"), TMA=("TMA_individual", "mean"))
-          .reset_index()
+    # Garante TMA numérico
+    df["TMA_min"] = pd.to_numeric(df["TMA_min"], errors="coerce")
+
+    # Cards
+    tma_geral = df["TMA_min"].mean(skipna=True)
+    qtd_tma_maior_2h = (df["TMA_min"] > 120).sum()
+
+    with metrics_ph.container():
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("TMA geral (min)", f"{tma_geral:.1f}" if pd.notna(tma_geral) else "—")
+        with col2:
+            st.metric("Qtd tickets com TMA > 2h", int(qtd_tma_maior_2h))
+
+    # Tabela: TMA > 20 min, maior → menor
+    df_tab = df[df["TMA_min"] > 20].copy()
+    if df_tab.empty:
+        subtitle_ph.caption("Nenhum ticket com TMA > 20 minutos para os filtros selecionados.")
+        with table_ph.container():
+            st.table(pd.DataFrame(columns=["Filial", "Time", "Assunto", "Descrição", "TMA (min)"]))
+        return
+
+    df_tab = df_tab.sort_values("TMA_min", ascending=False, kind="stable")
+
+    subtitle_ph.caption("Tickets com TMA > 20 minutos, ordenados do maior para o menor TMA.")
+
+    # Tabela final com Filial
+    df_display = df_tab[["Filial", "Time", "Assunto", "Descrição", "TMA_min"]].rename(
+        columns={"TMA_min": "TMA (min)"}
     )
 
-    # Normaliza tipos
-    agg["Qtd"] = pd.to_numeric(agg["Qtd"], errors="coerce").fillna(0).astype(int)
-    agg["TMA"] = pd.to_numeric(agg["TMA"], errors="coerce").round(2)
+    # Reset de índice (vamos tentar esconder depois)
+    df_display = df_display.reset_index(drop=True)
 
-    # Ordenação
-    agg = agg.sort_values(["TMA"], ascending=False, kind="stable").reset_index(drop=True)
+    # ------------ CONFIG DE LARGURA POR COLUNA (AJUSTE AQUI) ------------
+    COL_WIDTHS = {
+        "Filial": "8rem",
+        "Time": "14rem",
+        "Assunto": "16rem",
+        "Descrição": "32rem",
+        "TMA (min)": "7rem",
+    }
+    # Ajuste esses valores se quiser mais/menos espaço em cada coluna
+    # --------------------------------------------------------------------
 
-    # Subtítulo antes da grade
-    subtitle_ph.caption("Tabela ordenada por TMA (min) do maior para o menor.")
-
-    # Conjunto de colunas a exibir (não use nomes antigos como 'Qtd Tickets Abertos')
-    cols = [c for c in ["Time", "Qtd", "TMA"] if c in agg.columns]
-    df_display = agg.loc[:, cols].copy()
-
-    # Função de gradiente segura
+    # Gradiente TMA
     def red_white_gradient(col: pd.Series):
         ser = pd.to_numeric(col, errors="coerce")
         vmin = float(ser.min())
@@ -367,44 +344,77 @@ def render_table(df: pd.DataFrame):
         rng = vmax - vmin
         if rng == 0:
             return ["background-color: rgb(255,255,255); color: black;"] * len(col)
+
         styles = []
         for v in ser:
             if v is None or math.isnan(v) or not math.isfinite(v):
                 styles.append("")
                 continue
             t = (v - vmin) / rng
-            t = 0.0 if t < 0 else (1.0 if t > 1 else t)
-            g = int(round(255 * (1.0 - t)))  # branco→vermelho
+            t = max(0.0, min(1.0, t))
+            g = int(round(255 * (1.0 - t)))  # branco → vermelho
             styles.append(f"background-color: rgb(255,{g},{g}); color: black;")
         return styles
 
-    # Styler defensivo
     styled = df_display.style
 
-    # Formatação apenas para colunas existentes
-    fmt_map = {}
-    if "Qtd" in df_display.columns:
-        fmt_map["Qtd"] = "{:d}"
-    if "TMA" in df_display.columns:
-        fmt_map["TMA"] = "{:.2f}"
-    if fmt_map:
-        styled = styled.format(fmt_map)
+    # Formato TMA
+    styled = styled.format({"TMA (min)": "{:.1f}"})
 
-    # Gradiente apenas se 'TMA' existir
-    if "TMA" in df_display.columns:
-        styled = styled.apply(red_white_gradient, subset=["TMA"])
+    # Gradiente em TMA
+    styled = styled.apply(red_white_gradient, subset=["TMA (min)"])
 
-    # Cores de texto (aplica somente no que existir)
-    if "Time" in df_display.columns:
-        styled = styled.set_properties(subset=["Time"], **{"color": "white"})
-    if "Qtd" in df_display.columns:
-        styled = styled.set_properties(subset=["Qtd"], **{"color": "white"})
-    if "TMA" in df_display.columns:
-        styled = styled.set_properties(subset=["TMA"], **{"color": "black"})
+    # Cores de texto
+    styled = (
+        styled
+        .set_properties(subset=["Filial", "Time", "Assunto", "Descrição"], **{"color": "white"})
+        .set_properties(subset=["TMA (min)"], **{"color": "black"})
+    )
 
-    # Renderização
+    # Tudo alinhado à esquerda
+    styled = styled.set_properties(
+        subset=df_display.columns,
+        **{"text-align": "left"}
+    )
+
+    # Quebra de linha na descrição; linha cresce pra caber
+    styled = styled.set_properties(
+        subset=["Descrição"],
+        **{
+            "white-space": "normal",
+            "word-wrap": "break-word",
+            "overflow-wrap": "break-word",
+        },
+    )
+
+    # Aplicar largura máxima configurada por coluna (sem min-width para não forçar scroll)
+    for col, width in COL_WIDTHS.items():
+        if col in df_display.columns:
+            styled = styled.set_properties(
+                subset=[col],
+                **{
+                    "max-width": width,
+                },
+            )
+
+    # Tentar ocultar índice (nem sempre 100%, mas ajuda)
+    try:
+        styled = styled.hide(axis="index")
+    except Exception:
+        pass
+
+    # CSS extra para tentar esconder cabeçalho/célula do índice em versões mais novas
+    styled = styled.set_table_styles(
+        [
+            {"selector": "th.row_heading", "props": [("display", "none")]},
+            {"selector": "td.row_heading", "props": [("display", "none")]},
+            {"selector": "th.blank", "props": [("display", "none")]},
+        ],
+        overwrite=False,
+    )
+
     with table_ph.container():
-        st.dataframe(styled, width="stretch", height=1000, hide_index=True, key="grid_times")
+        st.table(styled)
 
 # Exibe a última tabela conhecida; se não houver timestamp ainda, marca referência
 rows_df_old = st.session_state.get("rows_df")
@@ -418,8 +428,10 @@ if rows_df_old is not None:
 def collect_rows(progress_cb=None) -> pd.DataFrame:
     def step(p, txt):
         if callable(progress_cb):
-            try: progress_cb(int(p), txt)
-            except Exception: pass
+            try:
+                progress_cb(int(p), txt)
+            except Exception:
+                pass
 
     auth = get_auth()
     base_url = (auth.get("INTERCOM_BASE_URL") or "https://api.intercom.io").rstrip("/")
@@ -463,34 +475,55 @@ def collect_rows(progress_cb=None) -> pd.DataFrame:
             pct = 55 + int(30 * frac)  # 55% → 85%
             step(pct, f"Obtendo Lugar/Filial/Regional… ({i}/{total})")
 
-    # 4) Montagem
+    # 4) Montagem por ticket
     step(90, "Finalizando…")
-    now_ts = datetime.now(timezone.utc).timestamp()
     rows = []
+    now_ts = datetime.now(timezone.utc).timestamp()
     for obj in slim:
         if obj.get("state") != "open" or obj.get("open") is not True:
             continue
-        try:
-            ca = float(obj.get("created_at"))
-        except Exception:
-            continue
-        tma_min = max(0.0, (now_ts - ca) / 60.0)
 
+        # TMA = tempo em aberto = agora - created_at
+        try:
+            created_at = float(obj.get("created_at"))
+        except Exception:
+            continue  # se não tiver created_at válido, pula
+
+        tma_min = max(0.0, (now_ts - created_at) / 60.0)
+
+        # Responsável / Time
         aid = obj.get("admin_assignee_id")
         admin_name = admin_map.get(str(aid)) if aid is not None else None
         resp = admin_name or "Não atribuído"
         if resp in EXCLUDE_ADMINS:
             continue
+
         time_group = map_to_team_or_self(resp)
 
+        # Filtro: remover Time = Supply (normalizado)
+        if _normalize(time_group) == "supply":
+            continue
+
+        # Assunto via tags
+        tags_block = obj.get("tags") or {}
+        assunto = extract_assunto_from_tags(tags_block)
+
+        # Descrição via custom_attributes da conversa
+        conv_custom_attrs = obj.get("custom_attributes") or {}
+        descricao = extract_descricao(conv_custom_attrs)
+
+        # Contact / Regional
         contacts_struct = obj.get("contacts") or {}
         contact_list = contacts_struct.get("contacts") or []
         contact_id = (contact_list[0] or {}).get("id") if (contact_list and isinstance(contact_list, list)) else None
-
         cinfo = contact_map.get(contact_id or "", {})
+
         rows.append({
+            "ConversationId": obj.get("id"),
             "Time": time_group,
-            "TMA_individual": tma_min,
+            "Assunto": assunto,
+            "Descrição": descricao,
+            "TMA_min": tma_min,
             "Responsavel": resp,
             "ContactId": contact_id or "",
             "Cidade": cinfo.get("Cidade", ""),
@@ -499,7 +532,19 @@ def collect_rows(progress_cb=None) -> pd.DataFrame:
             "Regional": cinfo.get("Regional", "NÃO MAPEADO"),
         })
 
-    cols = ["Time", "TMA_individual", "Responsavel", "ContactId", "Cidade", "Filial", "FilialCodigo", "Regional"]
+    cols = [
+        "ConversationId",
+        "Time",
+        "Assunto",
+        "Descrição",
+        "TMA_min",
+        "Responsavel",
+        "ContactId",
+        "Cidade",
+        "Filial",
+        "FilialCodigo",
+        "Regional",
+    ]
     step(100, "Concluído")
     return pd.DataFrame(rows, columns=cols)
 
@@ -512,8 +557,10 @@ if expired or rows_df_old is None:
     bar = progress_ph.progress(0, text="Preparando atualização…")
 
     def progress_cb(pct, text):
-        try: bar.progress(int(pct), text=text)
-        except Exception: pass
+        try:
+            bar.progress(int(pct), text=text)
+        except Exception:
+            pass
 
     try:
         rows_df_new = collect_rows(progress_cb=progress_cb)
