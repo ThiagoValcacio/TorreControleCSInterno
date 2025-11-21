@@ -2,6 +2,7 @@ from typing import Dict
 # -------------------------------------------------------------------
 # MAPA HARDCODED: "Responsável" -> "Time"
 TEAM_MAP_RAW: Dict[str, str] = {
+    "Fernanda": "DIVIDAS SERASA",
     "Onboarding": "ONBOARDING",
     "Thiago Costa": "FLEET RECEBIMENTO",
     "App": "APP",
