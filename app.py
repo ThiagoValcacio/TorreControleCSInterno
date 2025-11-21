@@ -15,15 +15,9 @@ from typing import Dict, List, Optional
 import pandas as pd
 import requests
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from map import TEAM_MAP_RAW, filiais, regionais_base
-
-# Tenta autorefresh sem recarregar a página
-try:
-    from streamlit_autorefresh import st_autorefresh
-    st_autorefresh(interval=600_000, key="periodic_refresh")  # 600.000 ms = 10 min
-except Exception:
-    pass  # segue sem autorefresh baseado em componente
 
 TIMEOUT = (5, 60)
 PER_PAGE = 150
@@ -202,7 +196,7 @@ def fetch_contact_info(base_url: str, hdrs: dict, contact_id: str) -> Dict[str, 
 # -------------------------
 # UI
 st.set_page_config(page_title="Torre de Controle - CS Interno", layout="wide")
-autorefresh_counter = st_autorefresh(interval=REFRESH_SECS * 1000, key="periodic_refresh")
+st_autorefresh(interval=REFRESH_SECS * 1000, key="periodic_refresh")
 
 # Estilo compacto
 st.markdown(
