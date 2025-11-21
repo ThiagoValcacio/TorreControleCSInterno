@@ -1,6 +1,6 @@
-streamlit>=1.38
+streamlit==1.38.0
 pandas
 requests
 matplotlib
 toml
-streamlit-autorefresh==0.0.2
+streamlit-autorefresh==1.0.1
