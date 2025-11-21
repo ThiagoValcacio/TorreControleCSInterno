@@ -3,3 +3,4 @@ pandas
 requests
 matplotlib
 toml
+streamlit-autorefresh==0.0.2
