@@ -9,6 +9,7 @@ TEAM_MAP_RAW: Dict[str, str] = {
     "Gerbert Santos Santos": "APP",
     "Suporte Mottu": "BOT",
     "Pedro Henrique Stival": "CUSTOMER SUCCESS",
+    "Thiago Assis": "CS DUVIDAS",
     "Thaís": "STORE",
     "Beatriz": "CUSTOMER SUCCESS",
     "Thiago Valcácio de Assis": "CS DUVIDAS",
